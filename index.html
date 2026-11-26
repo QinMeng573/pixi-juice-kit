@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pixi-juice-kit — playground</title>
+<style>
+  body{margin:0;background:#0b0618;color:#eee;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;gap:10px;padding:16px}
+  #panel{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:720px}
+  button{background:#241b3a;color:#eee;border:1px solid #4c3a75;border-radius:8px;padding:8px 14px;cursor:pointer}
+  button:hover{background:#322556}
+  label{font-size:13px;color:#bbb}
+  p{max-width:720px;font-size:13px;color:#999;text-align:center;margin:0}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7/dist/pixi.min.js"></script>
+</head>
+<body>
+<h3 style="margin:0">pixi-juice-kit · playground v0.1</h3>
+<div id="panel">
+  <button id="bHit">Hit (random tier)</button>
+  <button id="bCrit">Crit (tier 6 + hit-stop + shake)</button>
+  <label>Damage <input id="dmg" type="range" min="1" max="40" value="12"></label>
+  <label>Shake <input id="shk" type="range" min="0" max="20" value="8"></label>
+</div>
+<p>Click any grid cell: a shockwave travels cell-to-cell (0.088s per cell), the hit cell flashes its damage tier color. Tiers by damage: 2 / 5 / 11 / 20 / 35 → green, blue, purple, rose, crimson, gold-orange.</p>
+<div id="stage"></div>
+<script>
+const COLS = 9, ROWS = 5, CELL = 64, GAP = 4;
+const TIERS = [
+  { max: 2,        color: 0x3ddc68 },  // green
+  { max: 5,        color: 0x3aa0ff },  // blue
+  { max: 11,       color: 0xa55cff },  // purple
+  { max: 20,       color: 0xff3e8a },  // rose
+  { max: 35,       color: 0xff2438 },  // crimson
+  { max: Infinity, color: 0xff9a1f }   // gold-orange
+];
+function tierOf(dmg){ return TIERS.findIndex(t => dmg <= t.max); }
+
+const app = new PIXI.Application({ width: COLS*(CELL+GAP)+GAP, height: ROWS*(CELL+GAP)+GAP, backgroundColor: 0x120a24 });
+document.getElementById('stage').appendChild(app.view);
+const world = new PIXI.Container(); app.stage.addChild(world);
+
+// --- juice state ---
+let shakeAmp = 0, hitStopUntil = 0;
+function shake(amp){ shakeAmp = Math.max(shakeAmp, amp); }
+function hitStop(ms){ hitStopUntil = performance.now() + ms; }
+
+// --- grid ---
+const cells = [];
+for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+  const g = new PIXI.Graphics();
+  g.beginFill(0x1d1433); g.drawRoundedRect(0, 0, CELL, CELL, 8); g.endFill();
+  g.x = GAP + x*(CELL+GAP); g.y = GAP + y*(CELL+GAP);
+  g.eventMode = 'static'; g.cursor = 'pointer';
+  g.on('pointerdown', () => strike(x, y, +document.getElementById('dmg').value));
+  world.addChild(g); cells.push({ g, x, y, flashUntil: 0, color: 0 });
+}
+
+// shockwave: flat solid fill + border, travelling one cell per 0.088s (locked design rule)
+const waves = []; // {cx, cy, start}
+function strike(cx, cy, dmg){
+  const tier = tierOf(dmg);
+  waves.push({ cx, cy, start: performance.now(), tier });
+  const c = cells[cy*COLS+cx]; c.flashUntil = performance.now() + 260; c.color = TIERS[tier].color;
+  if (tier >= 4) shake(+document.getElementById('shk').value * (tier >= 5 ? 1.6 : 1));
+  if (tier >= 5) hitStop(90); // crit tiers get hit-stop
+}
+
+document.getElementById('bHit').onclick  = () => strike(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 1 + Math.floor(Math.random()*40));
+document.getElementById('bCrit').onclick = () => strike(Math.floor(COLS/2), Math.floor(ROWS/2), 40);
+
+app.ticker.add(() => {
+  const now = performance.now();
+  if (now < hitStopUntil) return; // frozen frame = hit-stop
+  // screen shake decay
+  if (shakeAmp > 0.1) {
+    world.x = (Math.random()*2-1) * shakeAmp; world.y = (Math.random()*2-1) * shakeAmp;
+    shakeAmp *= 0.88;
+  } else { world.x = 0; world.y = 0; }
+  // cells: base, wave fill, hit flash
+  for (const c of cells) {
+    let color = 0x1d1433, border = 0;
+    for (const w of waves) {
+      const dist = Math.max(Math.abs(c.x - w.cx), Math.abs(c.y - w.cy));
+      const step = Math.floor((now - w.start) / 88);
+      if (dist === step) { color = TIERS[w.tier].color; border = 1; }
+    }
+    if (now < c.flashUntil) color = c.color;
+    c.g.clear();
+    c.g.beginFill(color); c.g.drawRoundedRect(0, 0, CELL, CELL, 8); c.g.endFill();
+    if (border) { c.g.lineStyle(2, 0xffffff, 0.8); c.g.drawRoundedRect(1, 1, CELL-2, CELL-2, 8); }
+  }
+  for (let i = waves.length-1; i >= 0; i--)
+    if ((now - waves[i].start) / 88 > COLS + ROWS) waves.splice(i, 1);
+});
+</script>
+</body>
+</html>
